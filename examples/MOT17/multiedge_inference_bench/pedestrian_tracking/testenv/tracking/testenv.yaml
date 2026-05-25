@@ -2,9 +2,9 @@ testenv:
   # dataset configuration
   dataset:
     # the url address of train dataset index; string type;
-    train_url: "./dataset/mot17/annotations/train_half.json"
+    train_index: "./dataset/mot17/annotations/train_half.json"
     # the url address of test dataset index; string type;
-    test_url: "./dataset/mot17/annotations/val_half.json"
+    test_index: "./dataset/mot17/annotations/val_half.json"
 
   # metrics configuration for test case's evaluation; list type;
   metrics:
