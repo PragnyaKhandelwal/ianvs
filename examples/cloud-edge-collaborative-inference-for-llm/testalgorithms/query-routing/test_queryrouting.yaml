@@ -51,7 +51,7 @@ algorithm:
         -  max_tokens:
             # The maximum number of tokens that can be generated in the chat completion; int type;
             values:
-              - 1024
+              - 32
         -  repetition_penalty:
             # The parameter for repetition penalty; float type;
             values:
