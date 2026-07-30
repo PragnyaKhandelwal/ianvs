@@ -20,48 +20,30 @@ algorithm:
       hyperparameters:
       # name of the hyperparameter; string type;
         - model:
+            # CPU-only fallback: tiny public HF model (~1 MB, no GPU, no auth required)
             values:
-              - "Qwen/Qwen2.5-7B-Instruct"
+              - "sshleifer/tiny-gpt2"
         - backend:
-            # backend; string type;
-            # currently the options of value are as follows:
-            #  1> "huggingface": transformers backend;
-            #  2> "vllm": vLLM backend;
-            #  3> "api": OpenAI API backend;
-            #  4> "EagleSpecDec": EAGLE Speculative Decoding framework;
-            #  5> "LadeSepcDec": Lookahead Decoding framework;
             values:
               - "huggingface"
-              - "vllm"
-              # - "EagleSpecDec"
-
-        # If you're using speculative models, uncomment the following lines:
-        # - draft_model:
-        #     values:
-        #       - "yuhuili/EAGLE-llama2-chat-7B"
 
         - temperature:
-            # What sampling temperature to use, between 0 and 2; float type;
-            # For reproducable results, the temperature should be set to 0;
             values:
               - 0.0000001
         - top_p:
-            # nucleus sampling parameter; float type;
             values:
               - 0.9
         -  max_tokens:
-            # The maximum number of tokens that can be generated in the chat completion; int type;
+            # Reduced from 1024 to 32 for fast CI runs
             values:
-              - 1024
+              - 32
         -  repetition_penalty:
-            # The parameter for repetition penalty; float type;
             values:
               - 1
         -  use_cache:
-            # Whether to use reponse cache; boolean type;
             values:
               - true
-              
+
     - type: "cloudmodel"
       # name of python module; string type;
       name: "CloudModel"
@@ -69,10 +51,9 @@ algorithm:
       url: "./examples/cloud-edge-collaborative-inference-for-llm/testalgorithms/query-routing/cloud_model.py"
 
       hyperparameters:
-        # name of the hyperparameter; string type;
         - api_provider:
             values:
-              - "openai" 
+              - "openai"
         - model:
             values:
               - "gpt-4o-mini"
@@ -100,7 +81,7 @@ algorithm:
 
     - type: "hard_example_mining"
       # name of Router module; string type;
-      # BERTRouter, EdgeOnly, CloudOnly, RandomRouter, OracleRouter
-      name: "OracleRouter"
+      # EdgeOnly routes all queries to edge — no cloud API key required for CI
+      name: "EdgeOnly"
       # the url address of python module; string type;
       url: "./examples/cloud-edge-collaborative-inference-for-llm/testalgorithms/query-routing/hard_sample_mining.py"
