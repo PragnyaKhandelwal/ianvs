@@ -64,19 +64,21 @@ benchmarkingjob:
     cloud_number: 1
     edge_number: 2
     cluster_name: "ianvs-simulation"
-    kubeedge_version: "1.8.0"
-    sedna_version: "0.4.3"
+    kubeedge_version: "v1.23.0"
+    sedna_version: "latest"
 ```
 
 Related parameters and explanations are as follows:
 
-- `cloud_number` : int, number of the cloud worker
-- `edge_number` : int, number of the edge nodes.
-- `cluster_name` : int, name of the simulation cluster.
-- `kubeedge_version` : string, version of kubeedge, e.g. 1.8.0, latest.
-- `sedna_version` : string, version of sedna, e.g. 0.4.3, latest.
+- `cloud_number` : int, number of the cloud worker (0-2).
+- `edge_number` : int, number of the edge nodes (0-3).
+- `cluster_name` : string, name of the simulation cluster; must not be empty if given.
+- `kubeedge_version` : string, version of kubeedge, e.g. v1.23.0 (default), latest.
+- `sedna_version` : string, version of sedna, e.g. v0.4.3, latest (default: resolved by the installer).
 
-Note that the current simulation environment build script is still being debugged at this time. Our current testing is based on Kubeedge v1.8.0, sedna v0.4.3, and the system OS is ubuntu 20.04.
+Invalid values (booleans, negative or out-of-range node counts, empty names, non-string versions) are rejected when the config is parsed. Unknown keys are ignored with a warning. The simulation environment is torn down automatically when the job ends, even if it fails.
+
+The simulation requires a Linux host with Docker and kind installed. Ianvs no longer auto-installs them; it stops with a clear error if they are missing.
 
 ### 2. Run the benchmarkingJob
 
