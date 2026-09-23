@@ -144,7 +144,14 @@ benchmarkingjob:
   # NEW — entirely optional. Absent ⇒ today's behavior, unchanged.
   sandbox_profile:
     enabled: true
-    system_metrics: ["cpu_utilization", "peak_memory_mb", "wall_time_s"]
+    # "all" expands to the full metric set in §6.4 for the test case's
+    # detected paradigm. An explicit list restricts to a subset.
+    system_metrics: "all"
+  # NEW — optional. Absent ⇒ paradigm-aware defaults applied (§6.11).
+  device_simulation:
+    max_memory_mb: 2048
+    max_cpu_cores: 2
+    network_bandwidth_mbps: 50
   # EXISTING key — parsed by BenchmarkingJob._parse_simulation_config()
   # into self.simulation and consumed by build_simulation_environment().
   # Keys: cloud_number, edge_number, cluster_name, kubeedge_version, sedna_version.
@@ -158,17 +165,33 @@ benchmarkingjob:
 
 ### 6.4 System metrics in reports
 
-The `System Metrics Profiler` samples container-level telemetry (container stats / node exporters) and emits a fixed schema merged into the `StoryManager` record for each test case:
+The `System Metrics Profiler` samples container-level telemetry (container stats / node exporters, with a `psutil`/cgroup-aware fallback on hosts without a container runtime — see `simulation_system_admin.py`) and emits a fixed schema merged into the `StoryManager` record for each test case. The schema is **paradigm-agnostic**: every metric below is collected for all five algorithm paradigms (single-task learning, incremental learning, lifelong learning, federated learning, joint inference), not a selective subset — a prior gap where only the joint-inference PoC produced system metrics.
 
-| Metric | Source |
-|---|---|
-| `cpu_utilization_avg/max` | container runtime stats |
-| `peak_memory_mb` | container memory stats |
-| `wall_time_s` (per phase) | job timestamps |
-| `oom_failure` | pod OOMKilled status |
-| `network_profile` | emulated bandwidth/latency class |
+Metrics are grouped by what they depend on to be collected, not by when they'll be built.
 
-This directly addresses the system-metrics gap raised in the SIG AI review and complements existing algorithmic metrics on the leaderboard.
+**Group A — no Simulation Job Administrator or ConfigMap/job-status plumbing required.** These can be sampled directly around the test-case process/container:
+
+| Metric | Description | Source |
+|---|---|---|
+| `wall_time_s` (total) | total elapsed time for the test case | process timestamps |
+| `cpu_utilization_avg` / `cpu_utilization_max` | mean and peak CPU utilization across the sandboxed process/container lifetime | container runtime stats; cgroup `cpu.stat` fallback |
+| `peak_memory_mb` (memory high watermark) | maximum resident set size observed at any sampling tick, not an end-of-run snapshot — captures short OOM-adjacent spikes (e.g. LLM prefill, lifelong-learning knowledge-base reload) that an average would hide | cgroup `memory.peak` / container memory stats |
+| `oom_failure` | pod/process OOMKilled status | pod status / SIGKILL(137) exit code |
+
+**Group B — requires the Simulation Job Administrator plus container/K8s telemetry.** These need job-status list-watch and cluster-level network visibility that don't exist without that plumbing:
+
+| Metric | Description | Source |
+|---|---|---|
+| `wall_time_s` (per phase) | per-phase timestamps — phases are paradigm-specific (e.g. `train`/`infer` for single-task, `round_1..N` for incremental/federated, `task_1..N` for lifelong) | job timestamps |
+| `cpu_cores_used_avg` | average concurrently-occupied core count (federated learning's per-client trainers are aggregated here) | container runtime stats |
+| `memory_utilization_avg` | `peak_memory_mb` as a fraction of the configured `max_memory_mb` quota | derived |
+| `network_bandwidth_mbps_avg` / `network_bandwidth_mbps_peak` | ingress+egress throughput observed on the sandbox's virtual interface, relevant to federated learning's client↔aggregator traffic and joint inference's cloud↔edge query traffic | container network stats / `kind` node exporter |
+| `network_latency_ms` | emulated round-trip latency class applied via `network_profile` | `tc`/`netem` config echoed back |
+| `network_profile` | emulated bandwidth/latency class applied for the run | `tc`/`netem` config |
+
+Timing of each phase follows the roadmap in §7 and may change; this split is by technical dependency.
+
+This directly addresses the system-metrics gap raised in the SIG AI review and complements existing algorithmic metrics on the leaderboard, for every paradigm rather than the previously-documented joint-inference/single-task-only PoC pair.
 
 ### 6.5 Fault containment
 
@@ -265,7 +288,7 @@ benchmarkingjob:
   # New optional block — remove to restore today's behavior unchanged
   sandbox_profile:
     enabled: true
-    system_metrics: ["cpu_utilization", "peak_memory_mb", "wall_time_s"]
+    system_metrics: "all"
 ```
 
 **Step 2 — Run Ianvs (same command as today)**
@@ -390,6 +413,22 @@ docs/guides/
 ```
 
 > **Note on `core/storymanager/rank/rank.py`:** No modification to the rank module is required. Inside `_get_all()` (line 147), the call `row_data.update(test_result)` at line 163 means any key present in the test result dict — including `peak_rss_mb`, `wall_time_s`, and `oom_failure` — automatically appears as a leaderboard column. To surface system metrics in the leaderboard, users simply add the metric names to `selected_dataitem.metrics` in their YAML config.
+
+### 6.11 Resource Quota Simulation per Paradigm
+
+Each of the five algorithm paradigms has distinct resource characteristics, so a single fixed default for `device_simulation` would either starve heavy paradigms or waste quota on light ones. When a test case's `sandbox_profile` is present but its `device_simulation` block is absent, the `SandboxManager` applies a **paradigm-aware default**, detected from the test case's `algorithm.paradigm_type` (already read by `TestCaseController` today — no new detection logic required):
+
+| Paradigm | Characteristic | Default `max_memory_mb` | Default `max_cpu_cores` |
+|---|---|---|---|
+| Single-task learning | Memory-light; one model, one training/inference pass | 1024 | 1 |
+| Incremental learning | Memory-moderate; one model retained across rounds, plus a small replay/history buffer | 1536 | 2 |
+| Lifelong learning | Memory-heavy; multiple task models plus a persistent knowledge base loaded per round | 3072 | 2 |
+| Federated learning | CPU-bound; multiple simulated clients train concurrently within one sandbox, aggregation is comparatively memory-light | 2048 | 4 |
+| Joint inference (incl. LLM) | Memory-heavy; large foundation-model weights resident for inference | 4096 | 2 |
+
+Defaults are applied field-by-field, not block-by-block: a user may specify only `max_cpu_cores` and still receive the paradigm default for `max_memory_mb`. An explicit `device_simulation` block always takes precedence over the paradigm default, and `network_bandwidth_mbps` falls back to a flat 100 Mbps default across all paradigms unless overridden, since bandwidth constraints are a deliberate test condition rather than a paradigm-intrinsic property.
+
+If quota is exceeded, the same fault-containment path in §6.5 applies (`OOM_FAILURE` for memory; CPU quota is enforced as a soft throttle via cgroups `cpu.max`, not a kill, since CPU starvation degrades wall-clock time rather than crashing the process).
 
 ## 7. Roadmap (12 weeks)
 
